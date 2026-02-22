@@ -1,15 +1,9 @@
 import os
 import logging
+import asyncio
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import Application, CommandHandler, ContextTypes
-
-# Flask app
-app_flask = Flask(__name__)
-
-@app_flask.route('/')
-def home():
-    return "✅ Bot is running!"
 
 # المتغيرات
 TOKEN = os.getenv("BOT_TOKEN")
@@ -27,6 +21,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Flask app
+app_flask = Flask(__name__)
+
+@app_flask.route('/')
+def home():
+    return "✅ Bot is running!"
+
+@app_flask.route('/health')
+def health():
+    return "OK", 200
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """أمر /start"""
     keyboard = [
@@ -39,22 +44,48 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-def run_bot():
-    """تشغيل البوت"""
+async def run_bot_async():
+    """تشغيل البوت بشكل غير متزامن"""
+    # إنشاء التطبيق
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     
     logger.info("✅ البوت بدأ العمل...")
-    # استخدام polling عادي بدون run_polling (لتجنب مشكلة الخيوط)
-    app.run_polling(allowed_updates=['message'])
-
-if __name__ == "__main__":
-    # تشغيل البوت أولاً
-    import threading
-    bot_thread = threading.Thread(target=run_bot)
-    bot_thread.daemon = True
-    bot_thread.start()
     
-    # تشغيل Flask
+    # بدء البوت
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    
+    # إبقاء البوت شغالاً
+    try:
+        while True:
+            await asyncio.sleep(3600)  # انتظر ساعة ثم تحقق
+    except asyncio.CancelledError:
+        pass
+    finally:
+        # إيقاف التشغيل
+        await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
+
+def run_flask():
+    """تشغيل Flask"""
     port = int(os.environ.get("PORT", 10000))
     app_flask.run(host="0.0.0.0", port=port)
+
+if __name__ == "__main__":
+    # تشغيل Flask في عملية منفصلة (أسهل وأضمن)
+    import multiprocessing
+    
+    # تشغيل Flask في عملية منفصلة
+    flask_process = multiprocessing.Process(target=run_flask)
+    flask_process.start()
+    
+    # تشغيل البوت في العملية الرئيسية
+    try:
+        asyncio.run(run_bot_async())
+    except KeyboardInterrupt:
+        logger.info("🛑 إيقاف البوت...")
+        flask_process.terminate()
+        flask_process.join()
